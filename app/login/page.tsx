@@ -1,48 +1,96 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Sprout, AlertCircle } from "lucide-react"
-import { login } from "@/lib/auth"
+import { useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Sprout, AlertCircle } from "lucide-react";
+import { login, getCurrentUserProfile } from "@/lib/auth";
+import type { UserProfile } from "@/lib/auth";
 
 export default function LoginPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+  const router = useRouter();
+  const pathname = usePathname();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setIsLoading(true)
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
 
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    try {
+      // Usa a nova função de login do Supabase
+      const user = await login(email, password);
 
-    const user = login(email, password)
+      if (user) {
+        // Após o login bem-sucedido, buscar o perfil completo para obter o user_type
+        const userProfile: UserProfile | null = await getCurrentUserProfile();
 
-    if (user) {
-      // Redirect based on user type
-      if (user.type === "produtor") {
-        router.push("/produtor")
-      } else if (user.type === "vendedor") {
-        router.push("/vendedor")
-      } else if (user.type === "admin") {
-        router.push("/admin")
+        if (userProfile?.user_type) {
+          // Redireciona com base no tipo de usuário do perfil
+          if (userProfile.user_type === "producer") {
+            // 'producer' conforme a tabela SQL
+            router.push("/produtor");
+          } else if (userProfile.user_type === "seller") {
+            // 'seller' conforme a tabela SQL
+            router.push("/vendedor");
+          } else if (userProfile.user_type === "admin") {
+            router.push("/admin");
+          } else {
+            // Caso tenha um tipo inesperado ou não definido
+            console.warn(
+              "Tipo de usuário desconhecido:",
+              userProfile.user_type
+            );
+            router.push("/"); // Redireciona para a home como fallback
+          }
+        } else {
+          // Se não encontrar o perfil ou o tipo, redireciona para a home
+          // Nota: Isso pode acontecer se o cadastro do perfil falhar após a autenticação.
+          console.warn("Perfil ou tipo de usuário não encontrado após login.");
+          setError("Não foi possível carregar os dados do seu perfil.");
+          setIsLoading(false); // Para o loading para mostrar o erro
+          // Opcionalmente, pode redirecionar para uma página de erro ou home
+          // router.push("/");
+        }
+      } else {
+        // Teoricamente não deve chegar aqui se a função login lança erro, mas por segurança:
+        setError("Falha no login. Verifique suas credenciais.");
+        setIsLoading(false);
       }
-    } else {
-      setError("Email ou senha incorretos")
-      setIsLoading(false)
+    } catch (error: any) {
+      console.error("Erro detalhado no login:", error);
+      // Pega a mensagem de erro do Supabase ou uma mensagem genérica
+      // Adapta a mensagem de erro para ser mais amigável
+      if (
+        error?.message &&
+        error.message.includes("Invalid login credentials")
+      ) {
+        setError("Email ou senha incorretos.");
+      } else {
+        setError("Ocorreu um erro. Tente novamente mais tarde.");
+      }
+    } finally {
+      // Garante que o estado de loading seja desativado, exceto em caso de redirecionamento imediato
+      if (pathname === "/login") {
+        setIsLoading(false);
+      }
     }
-  }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-b from-accent/30 to-background">
@@ -79,7 +127,10 @@ export default function LoginPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password">Senha</Label>
-                <Link href="/recuperar-senha" className="text-sm text-primary hover:underline">
+                <Link
+                  href="/recuperar-senha"
+                  className="text-sm text-primary hover:underline"
+                >
                   Esqueceu a senha?
                 </Link>
               </div>
@@ -108,5 +159,5 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

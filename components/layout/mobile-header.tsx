@@ -1,7 +1,7 @@
-"use client"
+"use client";
 
-import { Bell, LogOut, User } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Bell, LogOut, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,23 +9,30 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { useRouter } from "next/navigation"
-import { getCurrentUser, logout } from "@/lib/auth"
-import { useEffect, useState } from "react"
+} from "@/components/ui/dropdown-menu";
+import { logout, getCurrentUserProfile } from "../../lib/auth";
+import type { UserProfile } from "../../lib/auth";
+import { useEffect, useState } from "react";
+// A importação do useRouter foi removida para resolver um problema de compilação.
+// A navegação será feita com o objeto 'window'.
 
 export function MobileHeader() {
-  const router = useRouter()
-  const [user, setUser] = useState<ReturnType<typeof getCurrentUser>>(null)
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    setUser(getCurrentUser())
-  }, [])
+    const fetchUser = async () => {
+      const userProfile = await getCurrentUserProfile();
+      setUser(userProfile);
+    };
 
-  const handleLogout = () => {
-    logout()
-    router.push("/login")
-  }
+    fetchUser();
+  }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    // Redireciona para a página de login e força o recarregamento
+    window.location.href = "/login";
+  };
 
   return (
     <header className="sticky top-0 z-40 bg-card border-b border-border">
@@ -47,12 +54,19 @@ export function MobileHeader() {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium">{user.name}</p>
-                    <p className="text-xs text-muted-foreground">{user.email}</p>
+                    <p className="text-sm font-medium">
+                      {user.full_name || "Usuário"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {user.email}
+                    </p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+                <DropdownMenuItem
+                  onClick={handleLogout}
+                  className="text-destructive cursor-pointer"
+                >
                   <LogOut className="mr-2 h-4 w-4" />
                   Sair
                 </DropdownMenuItem>
@@ -62,5 +76,5 @@ export function MobileHeader() {
         </div>
       </div>
     </header>
-  )
+  );
 }

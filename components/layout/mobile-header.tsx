@@ -1,3 +1,5 @@
+// components/layout/mobile-header.tsx
+
 "use client";
 
 import { Bell, LogOut, User } from "lucide-react";
@@ -13,24 +15,72 @@ import {
 import { logout, getCurrentUserProfile } from "../../lib/auth";
 import type { UserProfile } from "../../lib/auth";
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient"; // <-- IMPORTAR O SUPABASE
+
 // A importação do useRouter foi removida para resolver um problema de compilação.
 // A navegação será feita com o objeto 'window'.
 
 export function MobileHeader() {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0); // <-- NOVO STATE
+
+  // Função separada para buscar a contagem
+  const fetchUnreadCount = async (userId: string) => {
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("is_read", false);
+
+    if (error) {
+      console.error("Erro ao re-buscar contagem:", error.message);
+    } else {
+      setUnreadCount(count || 0);
+    }
+  };
 
   useEffect(() => {
-    const fetchUser = async () => {
+    const fetchUserAndNotifications = async () => {
       const userProfile = await getCurrentUserProfile();
       setUser(userProfile);
+
+      if (userProfile) {
+        // 1. Buscar a contagem inicial de notificações não lidas
+        await fetchUnreadCount(userProfile.id);
+
+        // 2. Subscrever a mudanças em Realtime
+        const channel = supabase
+          .channel(`notifications:user_id=eq.${userProfile.id}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*", // Ouvir INSERT, UPDATE, DELETE
+              schema: "public",
+              table: "notifications",
+              filter: `user_id=eq.${userProfile.id}`,
+            },
+            (payload) => {
+              // Quando algo mudar (nova notificação, ou marcada como lida)
+              // Re-calcula a contagem
+              fetchUnreadCount(userProfile.id);
+            }
+          )
+          .subscribe();
+
+        // Função de limpeza para remover o canal ao sair do componente
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      }
     };
 
-    fetchUser();
+    fetchUserAndNotifications();
+
+    // O array de dependências vazio [] garante que isto só corre uma vez
   }, []);
 
   const handleLogout = async () => {
     await logout();
-    // Redireciona para a página de login e força o recarregamento
     window.location.href = "/login";
   };
 
@@ -41,7 +91,10 @@ export function MobileHeader() {
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
-            <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
+            {/* --- LÓGICA DO PONTO VERMELHO ATUALIZADA --- */}
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
+            )}
           </Button>
 
           {user && (

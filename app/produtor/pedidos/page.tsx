@@ -1,33 +1,83 @@
 // Ficheiro: app/produtor/pedidos/page.tsx
+// VERSÃO CORRIGIDA
 
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation"; // <-- CORREÇÃO 1: Importar o useRouter
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentUserProfile } from "@/lib/auth";
+import type { UserProfile } from "@/lib/auth";
 import { MobileHeader } from "@/components/layout/mobile-header";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package, Calendar, DollarSign, Loader2, Info } from "lucide-react";
+import {
+  Package,
+  Calendar,
+  DollarSign,
+  Loader2,
+  Info,
+  Users,
+  Check,
+  X,
+  Clock,
+  Briefcase,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import Link from "next/link";
 
-// CORREÇÃO: A relação 'products' pode ser um array (mesmo que com um só item) ou um objeto único.
-interface Quota {
+// --- INTERFACES ---
+
+interface Participant {
+  id: string;
+  quantity: number;
+  status: "pending" | "active" | "cancelled";
+  profiles: {
+    full_name: string;
+  } | null;
+}
+
+interface MyCreatedQuota {
   id: string;
   status: "open" | "closed" | "completed" | "cancelled";
   quantity: number;
   target_price: number;
   delivery_date: string;
   unit: string;
-  products:
-    | {
-        name: string;
-      }
-    | { name: string }[]
-    | null;
+  products: {
+    name: string;
+  } | null;
+  quota_participants: Participant[];
 }
 
-const statusMap = {
+interface MyParticipation {
+  id: string;
+  quantity: number;
+  status: "pending" | "active" | "cancelled";
+  quotas: {
+    id: string;
+    status: "open" | "closed" | "completed" | "cancelled";
+    delivery_date: string;
+    target_price: number;
+    unit: string;
+    products: {
+      name: string;
+    } | null;
+    profiles: {
+      full_name: string;
+    } | null;
+  } | null;
+}
+
+// --- FIM DAS INTERFACES ---
+
+// Mapeamento de status da COTA
+const quotaStatusMap = {
   open: {
     label: "Aberta",
     className: "bg-blue-500/10 text-blue-700 border-blue-500/20",
@@ -46,156 +96,426 @@ const statusMap = {
   },
 };
 
-export default function ProducerQuotasPage() {
-  const [quotas, setQuotas] = useState<Quota[]>([]);
-  const [loading, setLoading] = useState(true);
+// Mapeamento de status do PARTICIPANTE (reutilizado)
+const participantStatusMap = {
+  pending: {
+    label: "Pendente",
+    className: "text-yellow-600 bg-yellow-500/10",
+    icon: Clock,
+  },
+  active: {
+    label: "Aprovado",
+    className: "text-green-700 bg-green-500/10",
+    icon: Check,
+  },
+  cancelled: {
+    label: "Rejeitado",
+    className: "text-red-700 bg-red-500/10",
+    icon: X,
+  },
+};
 
-  // Função para obter o nome do produto de forma segura
-  const getProductName = (products: Quota["products"]) => {
-    if (!products) return "Produto desconhecido";
-    if (Array.isArray(products)) {
-      return products[0]?.name || "Produto desconhecido";
+export default function ProducerQuotasPage() {
+  const router = useRouter(); // <-- CORREÇÃO 1: Inicializar o router
+  const [myCreatedQuotas, setMyCreatedQuotas] = useState<MyCreatedQuota[]>([]);
+  const [myParticipations, setMyParticipations] = useState<MyParticipation[]>(
+    []
+  );
+  const [loadingCreated, setLoadingCreated] = useState(true);
+  const [loadingParticipations, setLoadingParticipations] = useState(true);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+
+  // Busca as cotas que EU CRIE_I (com os participantes)
+  const fetchMyCreatedQuotas = async (userId: string) => {
+    setLoadingCreated(true);
+    try {
+      const { data, error } = await supabase
+        .from("quotas")
+        .select(
+          `
+          id, status, quantity, target_price, delivery_date, unit,
+          products ( name ),
+          quota_participants ( id, quantity, status, profiles ( full_name ) )
+        `
+        )
+        .eq("producer_id", userId) // Apenas cotas que EU criei
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setMyCreatedQuotas((data as unknown as MyCreatedQuota[]) || []);
+    } catch (error) {
+      console.error("Erro ao buscar cotas criadas:", error);
+      toast.error("Erro ao carregar as suas cotas criadas.");
+    } finally {
+      setLoadingCreated(false);
     }
-    return products.name;
+  };
+
+  // Busca as cotas que EU PARTICIPO
+  const fetchMyParticipations = async (userId: string) => {
+    setLoadingParticipations(true);
+    try {
+      const { data, error } = await supabase
+        .from("quota_participants")
+        .select(
+          `
+          id,
+          quantity,
+          status,
+          quotas (
+            id, status, delivery_date, target_price, unit,
+            products ( name ),
+            profiles ( full_name )
+          )
+        `
+        )
+        .eq("producer_id", userId) // Apenas participações minhas
+        .neq("quotas.producer_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setMyParticipations((data as unknown as MyParticipation[]) || []);
+    } catch (error) {
+      console.error("Erro ao buscar participações:", error);
+      toast.error("Erro ao carregar suas participações.");
+    } finally {
+      setLoadingParticipations(false);
+    }
   };
 
   useEffect(() => {
-    async function fetchQuotas() {
-      try {
-        const user = await getCurrentUserProfile();
-        if (!user) {
-          setLoading(false);
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from("quotas")
-          .select(
-            `
-            id,
-            status,
-            quantity,
-            target_price,
-            delivery_date,
-            unit,
-            products ( name )
-          `
-          )
-          .eq("producer_id", user.id)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          throw error;
-        }
-
-        setQuotas(data || []);
-      } catch (error) {
-        console.error("Erro ao buscar cotas:", error);
-      } finally {
-        setLoading(false);
+    async function loadAllData() {
+      const user = await getCurrentUserProfile();
+      if (!user) {
+        setLoadingCreated(false);
+        setLoadingParticipations(false);
+        router.push("/login"); // <-- Agora o 'router' existe
+        return;
       }
+      setCurrentUser(user);
+      await Promise.all([
+        fetchMyCreatedQuotas(user.id),
+        fetchMyParticipations(user.id),
+      ]);
     }
+    loadAllData();
+  }, [router]); // Adiciona router às dependências
 
-    fetchQuotas();
-  }, []);
+  // Função para aprovar ou rejeitar um participante (só se aplica à Tab 1)
+  const handleParticipantUpdate = async (
+    participantId: string,
+    newStatus: "active" | "cancelled"
+  ) => {
+    setMyCreatedQuotas((currentQuotas) =>
+      currentQuotas.map((quota) => ({
+        ...quota,
+        quota_participants: quota.quota_participants.map((p) =>
+          p.id === participantId ? { ...p, status: newStatus } : p
+        ),
+      }))
+    );
 
-  return (
-    <div className="min-h-screen bg-background pb-20">
-      <MobileHeader />
+    const { error } = await supabase
+      .from("quota_participants")
+      .update({ status: newStatus })
+      .eq("id", participantId);
 
-      <main className="max-w-lg mx-auto px-4 py-6">
-        <h1 className="text-2xl font-bold text-foreground mb-6">
-          Minhas Cotas
-        </h1>
+    if (error) {
+      toast.error("Erro ao atualizar status do participante.");
+      console.error("Erro de update:", error);
+      if (currentUser) fetchMyCreatedQuotas(currentUser.id); // Reverte
+    } else {
+      toast.success(
+        newStatus === "active"
+          ? "Participante aprovado!"
+          : "Participante rejeitado."
+      );
+    }
+  };
 
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          </div>
-        ) : quotas.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center h-64 bg-muted/30 rounded-xl border border-dashed border-border p-4">
-            <Info className="h-10 w-10 text-muted-foreground mb-3" />
-            <p className="text-muted-foreground font-semibold">
-              Nenhuma cota encontrada
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Crie a sua primeira cota para começar a economizar.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {quotas.map((quota) => (
-              <Card key={quota.id} className="overflow-hidden">
+  // --- CORREÇÃO 2: Simplificação da tipagem ---
+  const getProductName = (products: { name: string } | null | undefined) => {
+    if (!products) return "Produto desconhecido";
+    return products.name;
+  };
+  // --- FIM DA CORREÇÃO 2 ---
+
+  // --- COMPONENTES DE RENDERIZAÇÃO DAS TABS ---
+
+  // Tab 1: Cotas que criei
+  const renderMyCreatedQuotas = () => {
+    if (loadingCreated) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      );
+    }
+    if (myCreatedQuotas.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center text-center h-64 bg-muted/30 rounded-xl border border-dashed border-border p-4">
+          <Info className="h-10 w-10 text-muted-foreground mb-3" />
+          <p className="text-muted-foreground font-semibold">
+            Nenhuma cota criada
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Crie a sua primeira cota para começar a economizar.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        {myCreatedQuotas.map((quota) => (
+          <Card key={quota.id} className="overflow-hidden">
+            <CardContent className="p-4">
+              {/* Detalhes da Cota */}
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1">
+                  <h3 className="font-semibold text-foreground mb-1">
+                    {getProductName(quota.products)}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    ID da Cota: {quota.id.substring(0, 8)}
+                  </p>
+                </div>
+                <Badge
+                  className={
+                    quotaStatusMap[quota.status]?.className ||
+                    quotaStatusMap.closed.className
+                  }
+                  variant="outline"
+                >
+                  {quotaStatusMap[quota.status]?.label || "Desconhecido"}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
+                {/* ... (Detalhes de Quantidade, Preço, Entrega) ... */}
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Qtd. Total</p>
+                    <p className="text-sm font-medium">
+                      {quota.quantity} {quota.unit}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Preço Alvo</p>
+                    <p className="text-sm font-medium">
+                      R$ {quota.target_price.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Entrega</p>
+                    <p className="text-sm font-medium">
+                      {new Date(quota.delivery_date).toLocaleDateString(
+                        "pt-BR",
+                        {
+                          day: "2-digit",
+                          month: "short",
+                        }
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de Participantes (para aprovação) */}
+              {quota.quota_participants.length > 0 && (
+                <div className="pt-4 mt-4 border-t border-border">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold mb-3">
+                    <Users className="h-4 w-4" />
+                    Solicitações ({quota.quota_participants.length})
+                  </h4>
+                  <div className="space-y-3">
+                    {quota.quota_participants.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">
+                            {p.profiles?.full_name || "Desconhecido"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Qtd: {p.quantity} {quota.unit}
+                          </p>
+                        </div>
+                        {p.status === "pending" ? (
+                          <div className="flex gap-2">
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700"
+                              onClick={() =>
+                                handleParticipantUpdate(p.id, "cancelled")
+                              }
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8 text-green-600 hover:bg-green-50 hover:text-green-700"
+                              onClick={() =>
+                                handleParticipantUpdate(p.id, "active")
+                              }
+                            >
+                              <Check className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className={participantStatusMap[p.status].className}
+                          >
+                            {participantStatusMap[p.status].label}
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  };
+
+  // Tab 2: Cotas que participo
+  const renderMyParticipations = () => {
+    if (loadingParticipations) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      );
+    }
+    if (myParticipations.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center text-center h-64 bg-muted/30 rounded-xl border border-dashed border-border p-4">
+          <Info className="h-10 w-10 text-muted-foreground mb-3" />
+          <p className="text-muted-foreground font-semibold">
+            Nenhuma participação
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Vá para "Pesquisar" para entrar na sua primeira cota.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        {myParticipations.map((p) => {
+          if (!p.quotas) return null; // Segurança
+          const MyStatusIcon = participantStatusMap[p.status].icon;
+          return (
+            <Link
+              href={`/produtor/pesquisar/${p.quotas.id}`}
+              key={p.id}
+              passHref
+            >
+              <Card className="overflow-hidden hover:bg-accent/30 transition-colors">
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <h3 className="font-semibold text-foreground mb-1">
-                        {getProductName(quota.products)}
+                        {getProductName(p.quotas.products)}
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        ID da Cota: {quota.id.substring(0, 8)}
+                        Dono da cota: {p.quotas.profiles?.full_name || "N/A"}
                       </p>
                     </div>
                     <Badge
                       className={
-                        statusMap[quota.status]?.className ||
-                        statusMap.closed.className
+                        quotaStatusMap[p.quotas.status]?.className ||
+                        quotaStatusMap.closed.className
                       }
                       variant="outline"
                     >
-                      {statusMap[quota.status]?.label || "Desconhecido"}
+                      {quotaStatusMap[p.quotas.status]?.label || "Desconhecido"}
                     </Badge>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
+                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border">
                     <div className="flex items-center gap-2">
                       <Package className="h-4 w-4 text-muted-foreground" />
                       <div>
                         <p className="text-xs text-muted-foreground">
-                          Quantidade
+                          Minha Qtd.
                         </p>
                         <p className="text-sm font-medium">
-                          {quota.quantity} {quota.unit}
+                          {p.quantity} {p.quotas.unit}
                         </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <DollarSign className="h-4 w-4 text-muted-foreground" />
+                      <MyStatusIcon
+                        className={`h-4 w-4 ${
+                          participantStatusMap[p.status].className.split(" ")[0]
+                        }`}
+                      />
                       <div>
                         <p className="text-xs text-muted-foreground">
-                          Preço Alvo
+                          Meu Status
                         </p>
                         <p className="text-sm font-medium">
-                          R$ {quota.target_price.toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-xs text-muted-foreground">Entrega</p>
-                        <p className="text-sm font-medium">
-                          {new Date(quota.delivery_date).toLocaleDateString(
-                            "pt-BR",
-                            {
-                              day: "2-digit",
-                              month: "short",
-                            }
-                          )}
+                          {participantStatusMap[p.status].label}
                         </p>
                       </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )}
-      </main>
+            </Link>
+          );
+        })}
+      </div>
+    );
+  };
 
-      <MobileNav userType="produtor" />
-    </div>
+  return (
+    <>
+      <Toaster richColors />
+      <div className="min-h-screen bg-background pb-20">
+        <MobileHeader />
+
+        <main className="max-w-lg mx-auto px-4 py-6">
+          <h1 className="text-2xl font-bold text-foreground mb-6">
+            Minha Atividade
+          </h1>
+
+          <Tabs defaultValue="created" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 mb-4">
+              <TabsTrigger value="created" className="gap-2">
+                <Briefcase className="h-4 w-4" />
+                Cotas que Criei
+              </TabsTrigger>
+              <TabsTrigger value="joined" className="gap-2">
+                <Users className="h-4 w-4" />
+                Cotas que Participo
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Tab 1: Cotas que Criei (com gestão de participantes) */}
+            <TabsContent value="created">{renderMyCreatedQuotas()}</TabsContent>
+
+            {/* Tab 2: Cotas que Participo (com status da minha solicitação) */}
+            <TabsContent value="joined">{renderMyParticipations()}</TabsContent>
+          </Tabs>
+        </main>
+
+        <MobileNav userType="produtor" />
+      </div>
+    </>
   );
 }

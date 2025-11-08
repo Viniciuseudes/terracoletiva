@@ -8,6 +8,7 @@ import type { AuthError, SignUpWithPasswordCredentials, User as SupabaseAuthUser
 export interface UserProfile extends SupabaseAuthUser {
   // Adicionamos as propriedades da sua tabela 'profiles'
   full_name?: string;
+  cpf_cnpj?: string; // Campo Adicionado
   user_type?: 'producer' | 'seller' | 'admin'; // Ajuste 'admin' se necessário
   phone?: string;
   address?: string;
@@ -38,7 +39,7 @@ export async function login(email: string, password: string): Promise<SupabaseAu
  * Realiza o cadastro de um novo usuário.
  * Cria o usuário na autenticação e insere o perfil na tabela 'profiles'.
  */
-export async function signUp(credentials: SignUpWithPasswordCredentials, profileData: { full_name: string; user_type: 'producer' | 'seller'; phone?: string }): Promise<{ user: SupabaseAuthUser | null, error: AuthError | null }> {
+export async function signUp(credentials: SignUpWithPasswordCredentials, profileData: { full_name: string; user_type: 'producer' | 'seller'; phone?: string; cpf_cnpj: string }): Promise<{ user: SupabaseAuthUser | null, error: AuthError | null }> {
   // 1. Cadastra o usuário na autenticação do Supabase
   const { data: authData, error: authError } = await supabase.auth.signUp(credentials);
 
@@ -53,6 +54,7 @@ export async function signUp(credentials: SignUpWithPasswordCredentials, profile
     .insert({
       id: authData.user.id, // Vincula o perfil ao usuário autenticado
       full_name: profileData.full_name,
+      cpf_cnpj: profileData.cpf_cnpj, // CAMPO ADICIONADO
       user_type: profileData.user_type,
       phone: profileData.phone,
       // Adicione outros campos padrão se necessário (city, state, etc.)

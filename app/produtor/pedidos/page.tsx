@@ -1,10 +1,10 @@
 // Ficheiro: app/produtor/pedidos/page.tsx
-// VERSÃO CORRIGIDA
+// VERSÃO 3.0 (Definitiva - Corrigindo a exibição do botão de chat)
 
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation"; // <-- CORREÇÃO 1: Importar o useRouter
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentUserProfile } from "@/lib/auth";
 import type { UserProfile } from "@/lib/auth";
@@ -23,6 +23,7 @@ import {
   X,
   Clock,
   Briefcase,
+  MessageCircle, // <-- Ícone de chat
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -116,7 +117,7 @@ const participantStatusMap = {
 };
 
 export default function ProducerQuotasPage() {
-  const router = useRouter(); // <-- CORREÇÃO 1: Inicializar o router
+  const router = useRouter();
   const [myCreatedQuotas, setMyCreatedQuotas] = useState<MyCreatedQuota[]>([]);
   const [myParticipations, setMyParticipations] = useState<MyParticipation[]>(
     []
@@ -189,7 +190,7 @@ export default function ProducerQuotasPage() {
       if (!user) {
         setLoadingCreated(false);
         setLoadingParticipations(false);
-        router.push("/login"); // <-- Agora o 'router' existe
+        router.push("/login");
         return;
       }
       setCurrentUser(user);
@@ -199,7 +200,7 @@ export default function ProducerQuotasPage() {
       ]);
     }
     loadAllData();
-  }, [router]); // Adiciona router às dependências
+  }, [router]);
 
   // Função para aprovar ou rejeitar um participante (só se aplica à Tab 1)
   const handleParticipantUpdate = async (
@@ -233,12 +234,10 @@ export default function ProducerQuotasPage() {
     }
   };
 
-  // --- CORREÇÃO 2: Simplificação da tipagem ---
   const getProductName = (products: { name: string } | null | undefined) => {
     if (!products) return "Produto desconhecido";
     return products.name;
   };
-  // --- FIM DA CORREÇÃO 2 ---
 
   // --- COMPONENTES DE RENDERIZAÇÃO DAS TABS ---
 
@@ -347,37 +346,67 @@ export default function ProducerQuotasPage() {
                             Qtd: {p.quantity} {quota.unit}
                           </p>
                         </div>
-                        {p.status === "pending" ? (
-                          <div className="flex gap-2">
-                            <Button
-                              size="icon"
+
+                        {/* --- ESTE É O BLOCO CORRIGIDO --- */}
+                        <div className="flex items-center gap-2">
+                          {p.status === "pending" ? (
+                            <>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  participantStatusMap.pending.className
+                                }
+                              >
+                                {participantStatusMap.pending.label}
+                              </Badge>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                onClick={() =>
+                                  handleParticipantUpdate(p.id, "cancelled")
+                                }
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                className="h-8 w-8 text-green-600 hover:bg-green-50 hover:text-green-700"
+                                onClick={() =>
+                                  handleParticipantUpdate(p.id, "active")
+                                }
+                              >
+                                <Check className="h-4 w-4" />
+                              </Button>
+                            </>
+                          ) : (
+                            // Renderiza o badge para active ou cancelled
+                            <Badge
                               variant="outline"
-                              className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700"
-                              onClick={() =>
-                                handleParticipantUpdate(p.id, "cancelled")
+                              className={
+                                participantStatusMap[p.status]?.className
                               }
                             >
-                              <X className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              className="h-8 w-8 text-green-600 hover:bg-green-50 hover:text-green-700"
-                              onClick={() =>
-                                handleParticipantUpdate(p.id, "active")
-                              }
-                            >
-                              <Check className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className={participantStatusMap[p.status].className}
-                          >
-                            {participantStatusMap[p.status].label}
-                          </Badge>
-                        )}
+                              {participantStatusMap[p.status]?.label}
+                            </Badge>
+                          )}
+
+                          {/* ADICIONA O BOTÃO DE CHAT SE ESTIVER ATIVO */}
+                          {p.status === "active" && (
+                            <Link href={`/produtor/chat/${quota.id}`} passHref>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                aria-label="Ir para o chat"
+                              >
+                                <MessageCircle className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          )}
+                        </div>
+                        {/* --- FIM DO BLOCO CORRIGIDO --- */}
                       </div>
                     ))}
                   </div>
@@ -445,6 +474,7 @@ export default function ProducerQuotasPage() {
                     </Badge>
                   </div>
 
+                  {/* --- SEÇÃO DE STATUS ATUALIZADA (COM CHAT) --- */}
                   <div className="grid grid-cols-2 gap-3 pt-3 border-t border-border">
                     <div className="flex items-center gap-2">
                       <Package className="h-4 w-4 text-muted-foreground" />
@@ -458,22 +488,42 @@ export default function ProducerQuotasPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <MyStatusIcon
-                        className={`h-4 w-4 ${
-                          participantStatusMap[p.status].className.split(" ")[0]
-                        }`}
-                      />
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          Meu Status
-                        </p>
-                        <p className="text-sm font-medium">
-                          {participantStatusMap[p.status].label}
-                        </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <MyStatusIcon
+                          className={`h-4 w-4 ${
+                            participantStatusMap[p.status].className.split(
+                              " "
+                            )[0]
+                          }`}
+                        />
+                        <div>
+                          <p className="text-xs text-muted-foreground">
+                            Meu Status
+                          </p>
+                          <p className="text-sm font-medium">
+                            {participantStatusMap[p.status].label}
+                          </p>
+                        </div>
                       </div>
+
+                      {/* ATALHO DE CHAT PARA A SEGUNDA TAB */}
+                      {p.status === "active" && (
+                        <Link href={`/produtor/chat/${p.quotas.id}`} passHref>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            aria-label="Ir para o chat"
+                            onClick={(e) => e.stopPropagation()} // Impede o card-link de disparar
+                          >
+                            <MessageCircle className="h-4 w-4" />
+                          </Button>
+                        </Link>
+                      )}
                     </div>
                   </div>
+                  {/* --- FIM DA SEÇÃO DE STATUS --- */}
                 </CardContent>
               </Card>
             </Link>

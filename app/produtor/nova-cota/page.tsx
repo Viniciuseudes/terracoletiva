@@ -1,3 +1,5 @@
+// app/produtor/nova-cota/page.tsx
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -14,6 +16,8 @@ import {
   MapPin,
   ClipboardList,
   Loader2,
+  Users,
+  User,
 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import {
@@ -47,15 +51,18 @@ export default function NewQuotaPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedUnit, setSelectedUnit] = useState<string>("");
-  const [quantity, setQuantity] = useState<string>("");
+
+  const [totalQuantity, setTotalQuantity] = useState<string>("");
+  const [myQuantity, setMyQuantity] = useState<string>("");
+  const [maxParticipants, setMaxParticipants] = useState<string>("10");
   const [targetPrice, setTargetPrice] = useState<string>("");
   const [deliveryDate, setDeliveryDate] = useState<string>("");
   const [deliveryLocation, setDeliveryLocation] = useState<string>("");
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
     async function fetchData() {
-      // Fetch user profile
       const userProfile = await getCurrentUserProfile();
       if (userProfile) {
         setUser(userProfile);
@@ -63,11 +70,9 @@ export default function NewQuotaPage() {
           setDeliveryLocation(`${userProfile.city}, ${userProfile.state}`);
         }
       } else {
-        // Redireciona para o login se não houver usuário
         router.push("/login");
       }
 
-      // Fetch products
       const { data: productsData, error } = await supabase
         .from("products")
         .select("id, name, unit")
@@ -75,7 +80,6 @@ export default function NewQuotaPage() {
 
       if (error) {
         toast.error("Erro ao carregar produtos.");
-        console.error("Erro ao buscar produtos:", error);
       } else {
         setProducts(productsData || []);
       }
@@ -98,9 +102,16 @@ export default function NewQuotaPage() {
       return;
     }
 
+    const nTotalQuantity = parseFloat(totalQuantity);
+    const nMyQuantity = parseFloat(myQuantity);
+    const nMaxParticipants = parseInt(maxParticipants);
+
+    // Validações
     if (
       !selectedProductId ||
-      !quantity ||
+      !totalQuantity ||
+      !myQuantity ||
+      !maxParticipants ||
       !targetPrice ||
       !deliveryDate ||
       !deliveryLocation
@@ -109,25 +120,48 @@ export default function NewQuotaPage() {
       return;
     }
 
+    if (nMyQuantity > nTotalQuantity) {
+      toast.error("Erro de Quantidade", {
+        description:
+          "Sua quantidade não pode ser maior que a quantidade total.",
+      });
+      return;
+    }
+
+    if (nTotalQuantity <= 0 || nMyQuantity <= 0 || nMaxParticipants <= 0) {
+      toast.error("Valores Inválidos", {
+        description:
+          "As quantidades e o n° de cotistas devem ser maiores que zero.",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
-    const { error } = await supabase.from("quotas").insert({
-      producer_id: user.id,
-      product_id: selectedProductId,
-      quantity: parseFloat(quantity),
-      unit: selectedUnit,
-      target_price: parseFloat(targetPrice),
-      delivery_date: deliveryDate,
-      delivery_location: deliveryLocation,
-    });
+    const { data, error } = await supabase.rpc(
+      "create_quota_with_participant",
+      {
+        p_producer_id: user.id,
+        p_product_id: selectedProductId,
+        p_total_quantity: nTotalQuantity,
+        p_unit: selectedUnit,
+        p_target_price: parseFloat(targetPrice),
+        p_delivery_date: deliveryDate,
+        p_delivery_location: deliveryLocation,
+        p_my_quantity: nMyQuantity,
+        p_max_participants: nMaxParticipants,
+      }
+    );
 
     if (error) {
       toast.error("Ocorreu um erro ao criar a cota.");
-      console.error("Erro ao inserir cota:", error);
+      console.error("Erro ao chamar RPC create_quota_with_participant:", error);
     } else {
       toast.success("Cota criada com sucesso!");
+      console.log("Cota criada, ID:", data);
       setTimeout(() => {
-        // Idealmente, você redirecionaria para a página de detalhes da cota
+        // ***** CORREÇÃO ESTÁ AQUI *****
+        // Mudei de volta para a home do produtor, como você queria.
         router.push("/produtor");
       }, 1500);
     }
@@ -181,7 +215,7 @@ export default function NewQuotaPage() {
               </CardContent>
             </Card>
 
-            {/* Passo 2: Detalhes */}
+            {/* Passo 2: Detalhes da Compra (COM NOVOS CAMPOS) */}
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -192,17 +226,20 @@ export default function NewQuotaPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* Linha 1: Quantidade Total e Minha Quantidade */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="quantity">Quantidade Total</Label>
+                    <Label htmlFor="totalQuantity">Quantidade Total</Label>
                     <div className="relative">
+                      <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
-                        id="quantity"
+                        id="totalQuantity"
                         type="number"
-                        placeholder="Ex: 500"
-                        value={quantity}
-                        onChange={(e) => setQuantity(e.target.value)}
+                        placeholder="Ex: 1000"
+                        value={totalQuantity}
+                        onChange={(e) => setTotalQuantity(e.target.value)}
                         required
+                        className="pl-9"
                       />
                       {selectedUnit && (
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -211,6 +248,31 @@ export default function NewQuotaPage() {
                       )}
                     </div>
                   </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="myQuantity">Minha Quantidade</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="myQuantity"
+                        type="number"
+                        placeholder="Ex: 50"
+                        value={myQuantity}
+                        onChange={(e) => setMyQuantity(e.target.value)}
+                        required
+                        className="pl-9"
+                      />
+                      {selectedUnit && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          {selectedUnit}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Linha 2: Preço Alvo e N° de Cotistas */}
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="targetPrice">
                       Preço Alvo (por {selectedUnit || "unidade"})
@@ -225,6 +287,22 @@ export default function NewQuotaPage() {
                         onChange={(e) => setTargetPrice(e.target.value)}
                         className="pl-9"
                         required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maxParticipants">Nº Máx. de Cotistas</Label>
+                    <div className="relative">
+                      <Users className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="maxParticipants"
+                        type="number"
+                        placeholder="Ex: 10"
+                        value={maxParticipants}
+                        onChange={(e) => setMaxParticipants(e.target.value)}
+                        required
+                        className="pl-9"
                       />
                     </div>
                   </div>

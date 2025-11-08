@@ -1,5 +1,5 @@
 // app/produtor/pesquisar/[id]/page.tsx
-// VERSÃO FINAL CORRIGIDA (com ícone X importado)
+// VERSÃO FINAL (Corrigindo a visibilidade dos lances)
 
 "use client";
 
@@ -20,13 +20,14 @@ import {
   Check,
   Clock,
   MessageCircle,
-  X, // <-- CORREÇÃO: ÍCONE ADICIONADO
+  X,
+  CheckCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -37,36 +38,61 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
-// Interface para o tipo de produto (pode ser objeto ou array)
+// Mapa de Nomes de Produtos para Imagens
+const productImages: { [key: string]: string } = {
+  "Milho (em grão)": "/milho.jpeg",
+  "Soja (em grão)": "/soja.jpg",
+  "Torta de Algodão": "/resido.jpeg",
+  "Silagem de Milho": "/silagem.webp",
+  "Sal Mineral": "/sal.png",
+  "Ração para Tilápia": "/tilapia.png",
+};
+
 type ProductType =
   | { name: string; description: string }
   | { name: string; description: string }[]
   | null;
 
-// Interface para os dados detalhados da cota
+interface BidDetail {
+  id: string;
+  price_per_unit: number;
+  total_price: number;
+  delivery_terms: string;
+  profiles: {
+    full_name: string;
+  } | null;
+}
+
 interface QuotaDetail {
   id: string;
-  producer_id: string; // ID do criador
+  producer_id: string;
   delivery_date: string;
   delivery_location: string;
   quantity: number;
   unit: string;
   target_price: number;
-  products: ProductType; // Tipo corrigido
+  status: string; // Adicionado status
+  products: ProductType;
   profiles: {
     full_name: string;
   } | null;
-  bids: {
-    id: string;
-    profiles: {
-      full_name: string;
-    } | null;
-  }[];
+  bids: BidDetail[];
 }
 
 export default function ProductDetail() {
@@ -84,6 +110,7 @@ export default function ProductDetail() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [joinQuantity, setJoinQuantity] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  const [isAccepting, setIsAccepting] = useState(false);
 
   useEffect(() => {
     if (!quotaId) return;
@@ -99,16 +126,15 @@ export default function ProductDetail() {
         return;
       }
 
-      // 1. Buscar os detalhes da cota
       const { data, error } = await supabase
         .from("quotas")
         .select(
           `
           id, producer_id, delivery_date, delivery_location, quantity, unit,
-          target_price,
+          target_price, status,
           products ( name, description ),
           profiles ( full_name ),
-          bids ( id, profiles ( full_name ) )
+          bids ( id, price_per_unit, total_price, delivery_terms, profiles ( full_name ) )
         `
         )
         .eq("id", quotaId)
@@ -121,7 +147,6 @@ export default function ProductDetail() {
         setQuota(data as unknown as QuotaDetail);
       }
 
-      // 2. Verificar se o utilizador atual já participa ou solicitou
       const { data: participationData } = await supabase
         .from("quota_participants")
         .select("status")
@@ -139,7 +164,6 @@ export default function ProductDetail() {
     fetchData();
   }, [quotaId, router]);
 
-  // Função para lidar com a participação na cota
   const handleJoinQuota = async () => {
     if (!currentUser || !quota) return;
     if (!joinQuantity || parseFloat(joinQuantity) <= 0) {
@@ -148,18 +172,13 @@ export default function ProductDetail() {
       });
       return;
     }
-
     setIsJoining(true);
-
     const { error } = await supabase.from("quota_participants").insert({
       quota_id: quota.id,
       producer_id: currentUser.id,
       quantity: parseFloat(joinQuantity),
-      // status é 'pending' por defeito (definido no SQL)
     });
-
     if (error) {
-      console.error("Erro ao solicitar participação:", error);
       toast.error("Erro ao solicitar", {
         description:
           "Ocorreu um erro. Talvez você já tenha solicitado. " + error.message,
@@ -172,11 +191,30 @@ export default function ProductDetail() {
       setIsModalOpen(false);
       setJoinQuantity("");
     }
-
     setIsJoining(false);
   };
 
-  // --- Funções Auxiliares Corrigidas ---
+  const handleAcceptBid = async (bidId: string) => {
+    if (!quota) return;
+    setIsAccepting(true);
+
+    const { error } = await supabase.rpc("accept_bid_and_close_quota", {
+      p_bid_id: bidId,
+      p_quota_id: quota.id,
+    });
+
+    if (error) {
+      toast.error("Erro ao aceitar proposta", { description: error.message });
+      console.error("Erro ao chamar RPC:", error);
+    } else {
+      toast.success("Proposta aceite!", {
+        description: "A cota foi fechada e os vendedores notificados.",
+      });
+      setQuota((prev) => (prev ? { ...prev, status: "closed" } : null));
+    }
+    setIsAccepting(false);
+  };
+
   const getProductName = () => {
     const prod = quota?.products as ProductType;
     if (!prod) return "Produto não carregado";
@@ -191,16 +229,26 @@ export default function ProductDetail() {
     return prod.description;
   };
 
+  const getProductImage = () => {
+    const name = getProductName();
+    return productImages[name] || "/placeholder.jpg";
+  };
+
   const getProducerName = () =>
     quota?.profiles?.full_name || "Produtor não identificado";
 
-  const getProductImage = () => "/placeholder.jpg"; // Placeholder
-
   const isOwner = currentUser?.id === quota?.producer_id;
+  const isCotaOpen = quota?.status === "open";
 
-  // --- Lógica Corrigida do Botão Principal ---
   const getButtonContent = () => {
-    // Se for o Dono OU já for um participante Ativo, mostra o botão de Chat
+    if (!isCotaOpen && !isOwner && participationStatus !== "active") {
+      return (
+        <Button size="lg" className="w-full h-14" variant="outline" disabled>
+          Cota Fechada
+        </Button>
+      );
+    }
+
     if (isOwner || participationStatus === "active") {
       return (
         <Link href={`/produtor/chat/${quota?.id}`} passHref>
@@ -216,7 +264,6 @@ export default function ProductDetail() {
       );
     }
 
-    // Se a solicitação estiver Pendente
     if (participationStatus === "pending") {
       return (
         <Button size="lg" className="w-full h-14" variant="outline" disabled>
@@ -226,7 +273,6 @@ export default function ProductDetail() {
       );
     }
 
-    // Se for Rejeitado (opcional, pode tratar como "participar de novo")
     if (participationStatus === "cancelled") {
       return (
         <Button size="lg" className="w-full h-14" variant="outline" disabled>
@@ -236,7 +282,6 @@ export default function ProductDetail() {
       );
     }
 
-    // Botão default para participar (se não for dono, nem pendente, nem ativo)
     return (
       <DialogTrigger asChild>
         <Button
@@ -250,7 +295,6 @@ export default function ProductDetail() {
     );
   };
 
-  // Renderização de Loading
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -271,7 +315,6 @@ export default function ProductDetail() {
     );
   }
 
-  // Renderização de Cota Não Encontrada
   if (!quota) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -299,12 +342,10 @@ export default function ProductDetail() {
     );
   }
 
-  // Renderização Principal
   return (
     <>
       <Toaster richColors />
       <div className="min-h-screen bg-background pb-20">
-        {/* Header */}
         <header className="sticky top-0 z-40 bg-card border-b border-border">
           <div className="flex items-center justify-between h-16 px-4 max-w-lg mx-auto">
             <Link href="/produtor/pesquisar">
@@ -319,7 +360,6 @@ export default function ProductDetail() {
         </header>
 
         <main className="max-w-lg mx-auto">
-          {/* Imagem */}
           <div className="relative h-64 w-full">
             <Image
               src={getProductImage()}
@@ -330,7 +370,6 @@ export default function ProductDetail() {
           </div>
 
           <div className="px-4 py-6 space-y-6">
-            {/* Título e Descrição */}
             <div>
               <h1 className="text-2xl font-bold text-foreground mb-2">
                 {getProductName()}
@@ -340,14 +379,12 @@ export default function ProductDetail() {
               </p>
             </div>
 
-            {/* Quantidade */}
             <div>
               <h2 className="text-xl font-bold text-foreground">
                 Quantidade total: {quota.quantity} {quota.unit}
               </h2>
             </div>
 
-            {/* Região */}
             <Card className="p-4 bg-secondary/10 border-secondary/20">
               <div className="flex items-center gap-3">
                 <MapPin className="h-5 w-5 text-secondary" />
@@ -362,7 +399,6 @@ export default function ProductDetail() {
               </div>
             </Card>
 
-            {/* Preço Alvo */}
             <Card className="p-4 bg-muted/30">
               <div className="flex items-center justify-between">
                 <div>
@@ -379,21 +415,88 @@ export default function ProductDetail() {
               </div>
             </Card>
 
-            {/* Lances de Vendedores */}
+            {/* --- LÓGICA DE LANCES CORRIGIDA --- */}
             <div>
               <h3 className="font-semibold text-foreground mb-3">
-                Vendedores com Lances
+                {isOwner ? "Propostas Recebidas" : "Propostas dos Vendedores"}
               </h3>
               {quota.bids.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-3">
                   {quota.bids.map((bid) => (
-                    <Badge
-                      key={bid.id}
-                      variant="outline"
-                      className="px-4 py-2 text-sm"
-                    >
-                      {bid.profiles?.full_name || "Vendedor Anônimo"}
-                    </Badge>
+                    // O CARD DETALHADO AGORA É MOSTRADO PARA TODOS
+                    <Card key={bid.id} className="p-0 overflow-hidden">
+                      <CardContent className="p-4 space-y-3">
+                        <div className="flex justify-between items-start">
+                          <h4 className="font-semibold text-base">
+                            {bid.profiles?.full_name || "Vendedor Anônimo"}
+                          </h4>
+                          <div className="text-right">
+                            <p className="text-lg font-bold text-primary">
+                              R$ {bid.price_per_unit.toFixed(2)}
+                              <span className="text-sm text-muted-foreground">
+                                /{quota.unit}
+                              </span>
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              Total: R$ {bid.total_price.toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          <strong>Termos:</strong> {bid.delivery_terms || "N/A"}
+                        </p>
+
+                        {/* O BOTÃO SÓ APARECE PARA O DONO E SE A COTA ESTIVER ABERTA */}
+                        {isOwner && isCotaOpen && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                className="w-full"
+                                variant="outline"
+                                disabled={isAccepting}
+                              >
+                                <CheckCircle className="mr-2 h-4 w-4" />
+                                Aceitar Proposta
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Confirmar Proposta?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Ao aceitar esta proposta de{" "}
+                                  <strong>
+                                    {bid.profiles?.full_name ||
+                                      "Vendedor Anônimo"}
+                                  </strong>{" "}
+                                  no valor de{" "}
+                                  <strong>
+                                    R$ {bid.total_price.toFixed(2)}
+                                  </strong>
+                                  , a cota será fechada e as outras propostas
+                                  serão automaticamente rejeitadas.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel disabled={isAccepting}>
+                                  Cancelar
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => handleAcceptBid(bid.id)}
+                                  disabled={isAccepting}
+                                >
+                                  {isAccepting && (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  )}
+                                  Confirmar e Aceitar
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        )}
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
               ) : (
@@ -402,8 +505,8 @@ export default function ProductDetail() {
                 </p>
               )}
             </div>
+            {/* --- FIM DA LÓGICA DE LANCES --- */}
 
-            {/* Data Limite */}
             <Card className="p-6 text-center space-y-2 bg-muted/30">
               <p className="text-lg font-semibold text-foreground">
                 Data Limite para Entrega
@@ -417,7 +520,6 @@ export default function ProductDetail() {
               </p>
             </Card>
 
-            {/* Modal de Participação */}
             <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
               {getButtonContent()}
               <DialogContent className="sm:max-w-[425px]">

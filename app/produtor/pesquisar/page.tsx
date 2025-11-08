@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { MobileHeader } from "@/components/layout/mobile-header";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { RegionSelector } from "@/components/producer/region-selector";
+import { LocationSelector } from "@/components/producer/location-selector";
 import {
   Search,
   SlidersHorizontal,
@@ -20,38 +20,74 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
+import {
+  Drawer,
+  DrawerTrigger,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerFooter,
+  DrawerClose,
+} from "@/components/ui/drawer";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
-// Interface para as cotas que vamos buscar
 interface QuotaProduct {
   id: string;
   name: string;
-  // Adicione image_url se existir na sua tabela de produtos
-  // image_url: string;
+  category: string;
 }
 
+// 1. INTERFACE ATUALIZADA
 interface Quota {
   id: string;
-  producer_id: string; // Vamos precisar disto
+  producer_id: string;
   delivery_date: string;
   participants_count: number;
-  quantity: number;
-  products: QuotaProduct | null; // Produto relacionado
+  quantity: number; // Total da cota
+  current_quantity: number; // Qtd. já comprometida
+  max_participants: number; // N° máximo de vagas
+  products: QuotaProduct | null;
   profiles: {
-    // Perfil do criador
     full_name: string;
   } | null;
 }
+
+const categories = [
+  { id: "all", name: "Todas" },
+  { id: "Grãos", name: "Grãos" },
+  { id: "Ração", name: "Ração" },
+  { id: "Volumosos", name: "Volumosos" },
+  { id: "Suplementos", name: "Suplementos" },
+];
 
 export default function ProducerSearch() {
   const [quotas, setQuotas] = useState<Quota[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   useEffect(() => {
     async function fetchOpenQuotas() {
       setLoading(true);
 
+      // 2. QUERY ATUALIZADA (para buscar os novos campos)
       let query = supabase
         .from("quotas")
         .select(
@@ -61,16 +97,20 @@ export default function ProducerSearch() {
           delivery_date,
           participants_count,
           quantity,
-          products ( id, name ),
+          current_quantity,
+          max_participants,
+          products!inner ( id, name, category ), 
           profiles ( full_name )
         `
         )
-        .eq("status", "open"); // Apenas cotas ABERTAS
+        .eq("status", "open");
 
-      // Filtro de pesquisa
-      if (searchTerm) {
-        // Pesquisa no nome do produto (através da tabela relacionada)
-        query = query.ilike("products.name", `%${searchTerm}%`);
+      if (categoryFilter !== "all") {
+        query = query.eq("products.category", categoryFilter);
+      }
+
+      if (debouncedSearchTerm) {
+        query = query.ilike("products.name", `%${debouncedSearchTerm}%`);
       }
 
       const { data, error } = await query.order("created_at", {
@@ -80,20 +120,13 @@ export default function ProducerSearch() {
       if (error) {
         console.error("Erro ao buscar cotas:", error);
       } else {
-        // O Supabase retorna um array, mesmo que a relação seja 1-para-1 às vezes
-        // Este cast garante que o tipo está correto
         setQuotas(data as unknown as Quota[]);
       }
       setLoading(false);
     }
 
-    // Usamos um debounce para não pesquisar a cada tecla
-    const delayDebounceFn = setTimeout(() => {
-      fetchOpenQuotas();
-    }, 500); // 500ms de espera
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm]); // Re-executa a busca quando o searchTerm muda
+    fetchOpenQuotas();
+  }, [debouncedSearchTerm, categoryFilter]);
 
   const getProductName = (quota: Quota) => {
     return quota.products?.name || "Produto desconhecido";
@@ -103,25 +136,48 @@ export default function ProducerSearch() {
     return quota.profiles?.full_name || "Produtor desconhecido";
   };
 
-  const getProductImage = (quota: Quota) => {
-    // Adicione a lógica da sua imagem aqui
-    // Ex: return quota.products?.image_url || "/placeholder.jpg";
-    return "/placeholder.jpg"; // Placeholder temporário
-  };
+  const FilterContent = () => (
+    <RadioGroup
+      value={categoryFilter}
+      onValueChange={(value) => {
+        setCategoryFilter(value);
+        setIsFilterOpen(false);
+      }}
+      className="p-1"
+    >
+      {categories.map((category) => (
+        <div
+          key={category.id}
+          className="flex items-center space-x-2 py-2 rounded-md hover:bg-accent"
+        >
+          <RadioGroupItem
+            value={category.id}
+            id={`${category.id}-${isMobile ? "drawer" : "popover"}`}
+            className="ml-2"
+          />
+          <Label
+            htmlFor={`${category.id}-${isMobile ? "drawer" : "popover"}`}
+            className="text-base w-full cursor-pointer"
+          >
+            {category.name}
+          </Label>
+        </div>
+      ))}
+    </RadioGroup>
+  );
 
   return (
     <div className="min-h-screen bg-background pb-20">
       <MobileHeader />
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
-        <RegionSelector />
+        <LocationSelector />
 
         <div>
           <h1 className="text-2xl font-bold text-foreground mb-4">
             Participar de Cotas
           </h1>
 
-          {/* Search Bar */}
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -132,13 +188,51 @@ export default function ProducerSearch() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-12 w-12 bg-transparent"
-            >
-              <SlidersHorizontal className="h-5 w-5" />
-            </Button>
+
+            {isMobile ? (
+              <Drawer open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+                <DrawerTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-12 w-12 bg-transparent flex-shrink-0"
+                  >
+                    <SlidersHorizontal className="h-5 w-5" />
+                  </Button>
+                </DrawerTrigger>
+                <DrawerContent>
+                  <DrawerHeader>
+                    <DrawerTitle>Filtrar por Categoria</DrawerTitle>
+                  </DrawerHeader>
+                  <div className="p-4 pt-0">
+                    <FilterContent />
+                  </div>
+                  <DrawerFooter>
+                    <DrawerClose asChild>
+                      <Button variant="outline">Cancelar</Button>
+                    </DrawerClose>
+                  </DrawerFooter>
+                </DrawerContent>
+              </Drawer>
+            ) : (
+              <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-12 w-12 bg-transparent flex-shrink-0"
+                  >
+                    <SlidersHorizontal className="h-5 w-5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-56 p-2" align="end">
+                  <h3 className="px-3 py-2 text-sm font-semibold">
+                    Filtrar por Categoria
+                  </h3>
+                  <FilterContent />
+                </PopoverContent>
+              </Popover>
+            )}
           </div>
         </div>
 
@@ -154,8 +248,8 @@ export default function ProducerSearch() {
               Nenhuma cota encontrada
             </p>
             <p className="text-sm text-muted-foreground">
-              {searchTerm
-                ? "Tente rever o seu termo de busca."
+              {searchTerm || categoryFilter !== "all"
+                ? "Tente rever seus filtros ou termo de busca."
                 : "Ainda não há cotas abertas."}
             </p>
           </div>
@@ -163,13 +257,6 @@ export default function ProducerSearch() {
           <div className="space-y-4">
             {quotas.map((quota) => (
               <Card key={quota.id} className="overflow-hidden">
-                {/* Removi a imagem por agora, pois ela não está no seu schema 'products'.
-                  Pode adicionar de volta se incluir 'image_url' no select.
-                */}
-                {/* <div className="relative h-48 w-full">
-                  <Image src={getProductImage(quota)} alt={getProductName(quota)} fill className="object-cover" />
-                </div> */}
-
                 <div className="p-4 space-y-3">
                   <div>
                     <h3 className="font-semibold text-lg text-foreground">
@@ -180,6 +267,7 @@ export default function ProducerSearch() {
                     </p>
                   </div>
 
+                  {/* 3. CARDS ATUALIZADOS */}
                   <div className="grid grid-cols-3 gap-2">
                     <div className="flex flex-col items-center justify-center text-center bg-secondary/10 rounded-lg p-2 h-auto">
                       <Calendar className="h-4 w-4 text-secondary mb-1" />
@@ -200,20 +288,23 @@ export default function ProducerSearch() {
                     <div className="flex flex-col items-center justify-center text-center bg-secondary/10 rounded-lg p-2 h-auto">
                       <Users className="h-4 w-4 text-secondary mb-1" />
                       <span className="text-xs text-muted-foreground">
-                        Nº cotas
+                        Vagas Restantes
                       </span>
                       <span className="text-sm font-semibold">
-                        {quota.participants_count || 0}
+                        {Math.max(
+                          0,
+                          quota.max_participants - quota.participants_count
+                        )}
                       </span>
                     </div>
 
                     <div className="flex flex-col items-center justify-center text-center bg-secondary/10 rounded-lg p-2 h-auto">
                       <ShoppingBasket className="h-4 w-4 text-secondary mb-1" />
                       <span className="text-xs text-muted-foreground">
-                        Quantidade
+                        Qtd. Restante
                       </span>
                       <span className="text-sm font-semibold">
-                        {quota.quantity}
+                        {Math.max(0, quota.quantity - quota.current_quantity)}
                       </span>
                     </div>
                   </div>
